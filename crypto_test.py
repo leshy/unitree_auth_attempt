@@ -30,7 +30,7 @@ def aes_encrypt(data: str, key: str) -> str:
 def rsa_encrypt(data: str, public_key: RSA.RsaKey) -> str:
     """Encrypt data using RSA and a given public key."""
     cipher = PKCS1_v1_5.new(public_key)
-    # Maximum chunk size for encryption with RSA/ECB/PKCS1Padding is key size - 11 bytes
+    # Maximum chunk size for encryption with RSA/ECB/PKCS1Padding is key size , key- 11 bytes
     max_chunk_size = public_key.size_in_bytes() - 11
     data_bytes = data.encode("utf-8")
     encrypted_bytes = bytearray()
@@ -101,9 +101,6 @@ def rsa_load_public_key(pem_data: str) -> RSA.RsaKey:
     return RSA.import_key(key_bytes)
 
 
-# Test with some sample SDP data
-sample_sdp_data = '{"id":"STA_localNetwork","sdp":"v=0\\r\\no=- 3645197422144804388 2 IN IP4 127.0.0.1\\r\\ns=-\\r\\nt=0 0\\r\\na=group:BUNDLE 0\\r\\na=extmap-allow-mixed\\r\\na=msid-semantic: WMS\\r\\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\\r\\nc=IN IP4 0.0.0.0\\r\\na=ice-ufrag:fYVp\\r\\na=ice-pwd:pG7i0TDjCBcVPMrDVyhhlIUP\\r\\na=ice-options:trickle\\r\\na=fingerprint:sha-256 BE:32:40:7E:87:B6:E1:A1:03:73:94:95:3B:48:BC:7F:C2:A5:98:7E:B2:AF:FC:99:29:D7:E2:75:A1:96:42:B6\\r\\na=setup:actpass\\r\\na=mid:0\\r\\na=sctp-port:5000\\r\\na=max-message-size:262144\\r\\n","type":"offer"}'
-
 
 def prepareEncryptedRequest(response, sdp, aes_key):
     decoded_response = base64.b64decode(response).decode("utf-8")
@@ -126,6 +123,9 @@ def prepareEncryptedRequest(response, sdp, aes_key):
     
     print("\n", public_key.export_key().decode('utf-8'), "\n")
 
+    print("Test", aes_encrypt("test", aes_key))
+
+    
     # Encrypt the SDP data
     encoded_sdp = json.dumps(sdp)
     print("SDP", encoded_sdp)
@@ -184,3 +184,5 @@ try:
     
 except Exception as e:
     print(f"Error during encryption: {e}")
+
+    

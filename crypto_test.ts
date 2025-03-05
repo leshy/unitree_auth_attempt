@@ -1,3 +1,4 @@
+import aes from "npm:aes-cross"
 import * as crypto from "node:crypto"
 import { Buffer } from "node:buffer"
 //import { assertEquals } from "ht ps://deno.land/std@0.208.0/assert/mod.ts"
@@ -27,9 +28,24 @@ function base64ToArray(base64: string): Uint8Array {
 }
 
 function aesEncrypt(hexKey: string, text: string): string {
-    const key = Buffer.from("ABCDEFGHIJKLMNOP", "utf-8")
+    // aes.enc(target, key, iv = zero16IV, inputEncoding = 'utf-8', outputEncoding = 'base64', algorithm = 'aes-128-cbc', autoPadding = true);
+    return aes.enc(
+        text,
+        Buffer.from(hexKey, "hex"),
+        aes.emptyIV,
+        "utf-8",
+        "base64",
+        "aes-128-ecb",
+        true,
+    )
+}
+
+function aesEncryptNode(hexKey: string, text: string): string {
+    // Use the provided hex key instead of hardcoded value - convert hexKey to a Buffer
+    const key = Buffer.from(hexKey, "hex")
     const secret_msg = Buffer.from(text, "utf-8")
-    const cipher = crypto.createCipheriv("aes-128-ecb", key, null)
+    const cipher = crypto.createCipheriv("aes-128-ecb", key, Buffer.alloc(0))
+    cipher.setAutoPadding(true)
     const encryptedData = Buffer.concat([
         cipher.update(secret_msg),
         cipher.final(),
@@ -157,7 +173,8 @@ async function prepareEncryptedRequest(
     // @ts-ignore
     console.log("\n", await rsaKey.export("pem"), "\n")
 
-    //console.log("TEST", await rsaEncrypt(rsaKey, "test"))
+    console.log("TEST", aesEncrypt(aesKey, "test"))
+    console.log("TEST", aesEncryptNode(aesKey, "test"))
 
     // 3. Encrypt the SDP with AES and encrypt the AES key with RSA
     const encodedSdp = JSON.stringify(sdpData)
