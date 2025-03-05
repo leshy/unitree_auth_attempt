@@ -8,15 +8,6 @@ import hashlib
 import uuid
 import binascii
 
-# Load the robot data we collected
-with open('robot_data.json', 'r') as f:
-    robot_data = json.load(f)
-
-print("Loaded robot data:")
-print(f"Path ending: {robot_data['pathEnding']}")
-print(f"Public key length: {len(robot_data['publicKeyPem'])}")
-
-# Functions from decrypt.py
 def pad(data: str) -> bytes:
     """Pad data to be a multiple of 16 bytes (AES block size)."""
     block_size = AES.block_size
@@ -78,16 +69,16 @@ def generate_aes_key() -> str:
 def calc_local_path_ending(data1):
     # Initialize an array of strings
     strArr = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]
-    
+
     # Extract the last 10 characters of data1
     last_10_chars = data1[-10:]
-    
+
     # Split the last 10 characters into chunks of size 2
-    chunked = [last_10_chars[i:i+2] for i in range(0, len(last_10_chars), 2)]
-    
+    chunked = [last_10_chars[i : i + 2] for i in range(0, len(last_10_chars), 2)]
+
     # Initialize an empty list to store indices
     arrayList = []
-    
+
     # Iterate over the chunks and find the index of the second character in strArr
     for chunk in chunked:
         if len(chunk) > 1:
@@ -98,10 +89,10 @@ def calc_local_path_ending(data1):
             except ValueError:
                 # Handle case where the character is not found in strArr
                 print(f"Character {second_char} not found in strArr.")
-    
+
     # Convert arrayList to a string without separators
     joinToString = "".join(map(str, arrayList))
-    
+
     return joinToString
 
 def rsa_load_public_key(pem_data: str) -> RSA.RsaKey:
@@ -109,28 +100,37 @@ def rsa_load_public_key(pem_data: str) -> RSA.RsaKey:
     key_bytes = base64.b64decode(pem_data)
     return RSA.import_key(key_bytes)
 
-# Test path ending calculation
-calculated_path_ending = calc_local_path_ending(robot_data["data1"])
-print(f"Calculated path ending: {calculated_path_ending}")
-print(f"Expected path ending: {robot_data['pathEnding']}")
-print(f"Path ending matches: {calculated_path_ending == robot_data['pathEnding']}")
 
 # Test with some sample SDP data
 sample_sdp_data = '{"id":"STA_localNetwork","sdp":"v=0\\r\\no=- 3645197422144804388 2 IN IP4 127.0.0.1\\r\\ns=-\\r\\nt=0 0\\r\\na=group:BUNDLE 0\\r\\na=extmap-allow-mixed\\r\\na=msid-semantic: WMS\\r\\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\\r\\nc=IN IP4 0.0.0.0\\r\\na=ice-ufrag:fYVp\\r\\na=ice-pwd:pG7i0TDjCBcVPMrDVyhhlIUP\\r\\na=ice-options:trickle\\r\\na=fingerprint:sha-256 BE:32:40:7E:87:B6:E1:A1:03:73:94:95:3B:48:BC:7F:C2:A5:98:7E:B2:AF:FC:99:29:D7:E2:75:A1:96:42:B6\\r\\na=setup:actpass\\r\\na=mid:0\\r\\na=sctp-port:5000\\r\\na=max-message-size:262144\\r\\n","type":"offer"}'
 
-# Create real key and encrypt
-try:
+
+def prepareEncryptedRequest(response, sdp, aes_key):
+    decoded_response = base64.b64decode(response).decode("utf-8")
+
+    # Parse the decoded response as JSON
+    decoded_json = json.loads(decoded_response)
+
+    # Extract the 'data1' field from the JSON
+    data1 = decoded_json.get("data1")
+
     # Generate AES key
-    aes_key = generate_aes_key()
-    print(f"\nGenerated AES key: {aes_key} (length: {len(aes_key)})")
+    path_ending = calc_local_path_ending(data1)
+    public_key_pem = data1[10 : len(data1) - 10]
     
-    # Load the public key
-    public_key = rsa_load_public_key(robot_data["publicKeyPem"])
-    print("Loaded public key successfully")
+    aes_key = client_data["aes_key"]
+    print(f"PATH: {path_ending}")
+    print(f"AES key: {aes_key}")
+    print(f"RSA PEM: {public_key_pem}")
+    public_key = rsa_load_public_key(public_key_pem)
     
+    print("\n", public_key.export_key().decode('utf-8'), "\n")
+
     # Encrypt the SDP data
-    encrypted_sdp = aes_encrypt(sample_sdp_data, aes_key)
-    print(f"Encrypted SDP (first 50 chars): {encrypted_sdp[:50]}...")
+    encoded_sdp = json.dumps(sdp)
+    print("SDP", encoded_sdp)
+    encrypted_sdp = aes_encrypt(encoded_sdp, aes_key)
+    print("Encrypted SDP", encrypted_sdp)
     
     # Encrypt the AES key with RSA
     encrypted_key = rsa_encrypt(aes_key, public_key)
@@ -147,7 +147,8 @@ try:
     print(f"data2 length: {len(form_data['data2'])}")
     
     print("\nThis is the data that should be sent to:")
-    print(f"http://<robot-ip>:9991/con_ing_{robot_data['pathEnding']}")
+
+    print(f"http://<robot-ip>:9991/con_ing_{path_ending}")
     
     # Output the URL-encoded form that would be sent (for comparison with TypeScript)
     import urllib.parse
@@ -160,14 +161,26 @@ try:
         "encrypted_sdp": encrypted_sdp,
         "encrypted_key": encrypted_key,
         "url_encoded_form": url_encoded,
-        "path_ending": robot_data['pathEnding'],
-        "url": f"http://<robot-ip>:9991/con_ing_{robot_data['pathEnding']}"
+        "path_ending": path_ending,
+        "url": f"http://<robot-ip>:9991/con_ing_{path_ending}"
     }
     
     with open('python_crypto_output.json', 'w') as f:
         json.dump(output_data, f, indent=2)
     
     print("\nOutput saved to python_crypto_output.json")
+
+
+try:
+
+    # Load the robot data we collected
+    with open('mock/robot_data.raw', 'r') as f:
+        robot_response = f.read()
+
+    with open('mock/aes.json', 'r') as f:
+        client_data = json.load(f)
+        
+    print(prepareEncryptedRequest(robot_response, client_data["sdp"], client_data["aes_key"]))
     
 except Exception as e:
     print(f"Error during encryption: {e}")
