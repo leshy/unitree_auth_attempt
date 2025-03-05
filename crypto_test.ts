@@ -60,14 +60,14 @@ async function loadPublicKey(pemData: string): Promise<CryptoKey> {
 }
 
 function aesEncrypt(data: string, key: string): string {
-    // Convert the key to WordArray using Hex encoding (not UTF-8)
-    const keyWordArray = CryptoJS.enc.Hex.parse(key)
+    // Convert the key to bytes as in Python
+    const keyBytes = CryptoJS.enc.Utf8.parse(key)
     
-    // Convert the data to WordArray
+    // Convert the data to WordArray for encryption
     const dataWordArray = CryptoJS.enc.Utf8.parse(data)
     
     // Encrypt using AES in ECB mode
-    const encrypted = CryptoJS.AES.encrypt(dataWordArray, keyWordArray, {
+    const encrypted = CryptoJS.AES.encrypt(dataWordArray, keyBytes, {
         mode: CryptoJS.mode.ECB,
         padding: CryptoJS.pad.Pkcs7,
     })
@@ -104,11 +104,11 @@ async function rsaEncrypt(data: string, publicKey: CryptoKey): Promise<string> {
 }
 
 function aesDecrypt(encryptedData: string, key: string): string {
-    // Convert the key to WordArray using Hex encoding (not UTF-8)
-    const keyWordArray = CryptoJS.enc.Hex.parse(key)
+    // Convert the key to bytes as in Python
+    const keyBytes = CryptoJS.enc.Utf8.parse(key)
     
     // Decrypt using AES in ECB mode
-    const decrypted = CryptoJS.AES.decrypt(encryptedData, keyWordArray, {
+    const decrypted = CryptoJS.AES.decrypt(encryptedData, keyBytes, {
         mode: CryptoJS.mode.ECB,
         padding: CryptoJS.pad.Pkcs7,
     })

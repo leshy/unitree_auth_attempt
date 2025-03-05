@@ -1,6 +1,10 @@
 import { RTCPeerConnection, RTCSessionDescription } from "npm:webrtc-polyfill"
+import CryptoJS from "npm:crypto-js"
 
 type SDPPeerAnswer = { sdp: string; type: "answer" }
+
+// A global reference to the robot connection for use across functions
+let globalRobotConnection: RobotConnection | null = null
 
 /**
  * Connect to a Go2 robot using WebRTC
@@ -10,18 +14,10 @@ type SDPPeerAnswer = { sdp: string; type: "answer" }
  */
 async function connect_robot(
     ip: string,
-): Promise<any> {
-    // Create WebRTC peer connection
-    const pc = new RTCPeerConnection()
-
-    // Create data channel - this is required for createOffer() to work properly
-    console.log("Creating data channel")
-    const dataChannel = pc.createDataChannel("data", { id: 2 })
-
-    // Add event listeners for debugging
-    dataChannel.onopen = () => console.log("Data channel opened")
-    dataChannel.onclose = () => console.log("Data channel closed")
-    dataChannel.onerror = (error) => console.log("Data channel error:", error)
+    token: string = "",
+): Promise<SDPPeerAnswer> {
+    // Use the global robotConnection instance from main()
+    const pc = globalRobotConnection?.pc || new RTCPeerConnection()
 
     console.log("Creating offer...")
 
@@ -39,6 +35,7 @@ async function connect_robot(
     const peer_answer = await get_peer_answer(
         ip,
         sdpOffer as RTCSessionDescription,
+        token,
     )
 
     // Set the remote description with the answer
@@ -61,15 +58,16 @@ async function connect_robot(
 /**
  * Get peer answer from the robot
  */
-
 async function get_peer_answer(
     robotIp: string,
     sdpOffer: RTCSessionDescription,
+    token: string = "",
 ): Promise<SDPPeerAnswer> {
     const sdpOfferJson = {
         id: "STA_localNetwork",
         sdp: sdpOffer.sdp,
         type: sdpOffer.type,
+        token: token,
     }
 
     const newSdp = JSON.stringify(sdpOfferJson)
@@ -97,17 +95,73 @@ async function get_peer_answer(
 
         console.log("Public key received, path ending calculated:", pathEnding)
 
-        // In a real implementation, we would:
-        // 1. Generate AES key
-        // 2. Load Public Key
-        // 3. Encrypt the SDP and AES key
-        // 4. Send encrypted data to con_ing_{pathEnding}
-        // 5. Decrypt the response
+        // Now let's implement the real communication with the device:
 
-        // For now, return a mock peer answer to test the connection flow
-        return {
-            sdp: "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\na=msid-semantic: WMS\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\na=ice-ufrag:mock\r\na=ice-pwd:mockpassword\r\na=ice-options:trickle\r\na=fingerprint:sha-256 00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00\r\na=setup:active\r\na=mid:0\r\na=sctp-port:5000\r\na=max-message-size:262144\r\n",
-            type: "answer",
+        // 1. Generate AES key (UUID converted to hex string)
+        const aesKey = generateAesKey()
+        console.log("Generated AES key")
+
+        // 2. Load Public Key
+        // Convert PEM format to usable key
+        const publicKey = await loadPublicKey(publicKeyPem)
+        console.log("Loaded public key")
+
+        // 3. Encrypt the SDP with AES and encrypt the AES key with RSA
+        const encryptedSdp = aesEncrypt(newSdp, aesKey)
+        const encryptedKey = await rsaEncrypt(aesKey, publicKey)
+        console.log("Encrypted SDP and key")
+
+        // 4. Send encrypted data to con_ing_{pathEnding}
+        const requestBody = {
+            data1: encryptedSdp,
+            data2: encryptedKey,
+        }
+
+        // URL for the second request
+        const secondUrl = `http://${robotIp}:9991/con_ing_${pathEnding}`
+
+        // Set appropriate headers
+        const headers = {
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+
+        // Convert to URL-encoded form data (key1=value1&key2=value2)
+        // This matches how Python's requests library formats form data
+        const formData = new URLSearchParams()
+        formData.append("data1", encryptedSdp)
+        formData.append("data2", encryptedKey)
+        
+        console.log(`Sending encrypted data to ${secondUrl}`)
+        console.log("Request body format:", formData.toString())
+        
+        const secondResponse = await fetch(secondUrl, {
+            method: "POST",
+            headers,
+            body: formData
+        })
+
+        if (secondResponse.status === 200) {
+            // 5. Decrypt the response
+            const encryptedResponse = await secondResponse.text()
+            const decryptedResponse = aesDecrypt(encryptedResponse, aesKey)
+            console.log("Successfully decrypted response")
+
+            // Parse the decrypted response
+            const peerAnswer = JSON.parse(decryptedResponse)
+            console.log("Received real peer answer from device")
+
+            return {
+                sdp: peerAnswer.sdp,
+                type: "answer",
+            }
+        } else {
+            console.error(
+                "Failed to get response from second request:",
+                secondResponse.status,
+            )
+            throw new Error(
+                `Failed to get response from ${secondUrl}: ${secondResponse.status}`,
+            )
         }
     }
 
@@ -150,7 +204,422 @@ function calc_local_path_ending(data1: string): string {
     return joinToString
 }
 
+/**
+ * Generate a random AES key as a hex string
+ * This matches the Python implementation which uses a UUID (16 bytes) 
+ * and converts it to a hex string (32 characters)
+ */
+function generateAesKey(): string {
+    // Generate a UUID (16 bytes)
+    // This is what Python does with uuid.uuid4().bytes
+    const randomValues = new Uint8Array(16)
+    crypto.getRandomValues(randomValues)
+    
+    // Convert to hex string - this will be 32 characters long
+    // Just like the Python binascii.hexlify(uuid_32).decode("utf-8")
+    return Array.from(randomValues)
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("")
+}
+
+/**
+ * Load an RSA public key from PEM format
+ */
+async function loadPublicKey(pemData: string): Promise<CryptoKey> {
+    // Decode the base64 PEM data
+    const binaryDer = base64ToArrayBuffer(pemData)
+
+    // Import the key
+    return await crypto.subtle.importKey(
+        "spki",
+        binaryDer,
+        {
+            name: "RSA-OAEP",
+            hash: "SHA-256",
+        },
+        true,
+        ["encrypt"],
+    )
+}
+
+/**
+ * Convert base64 to ArrayBuffer
+ */
+function base64ToArrayBuffer(base64: string): ArrayBuffer {
+    const binaryString = atob(base64)
+    const bytes = new Uint8Array(binaryString.length)
+    for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i)
+    }
+    return bytes.buffer
+}
+
+/**
+ * Encrypt data using AES (ECB mode)
+ */
+function aesEncrypt(data: string, key: string): string {
+    // Convert the key to WordArray using Hex encoding (not UTF-8)
+    const keyWordArray = CryptoJS.enc.Hex.parse(key)
+
+    // Convert the data to WordArray
+    const dataWordArray = CryptoJS.enc.Utf8.parse(data)
+
+    // Encrypt using AES in ECB mode
+    const encrypted = CryptoJS.AES.encrypt(dataWordArray, keyWordArray, {
+        mode: CryptoJS.mode.ECB,
+        padding: CryptoJS.pad.Pkcs7,
+    })
+
+    // Return the result as base64
+    return encrypted.toString()
+}
+
+/**
+ * RSA encrypt data with public key
+ */
+async function rsaEncrypt(data: string, publicKey: CryptoKey): Promise<string> {
+    // Convert data to bytes
+    const encoder = new TextEncoder()
+    const dataBytes = encoder.encode(data)
+
+    // Encrypt the data
+    const encryptedBuffer = await crypto.subtle.encrypt(
+        {
+            name: "RSA-OAEP",
+        },
+        publicKey,
+        dataBytes,
+    )
+
+    // Convert to base64
+    return arrayBufferToBase64(encryptedBuffer)
+}
+
+/**
+ * Convert ArrayBuffer to base64
+ */
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+    const bytes = new Uint8Array(buffer)
+    let binary = ""
+    for (let i = 0; i < bytes.byteLength; i++) {
+        binary += String.fromCharCode(bytes[i])
+    }
+    return btoa(binary)
+}
+
+/**
+ * Decrypt AES encrypted data
+ */
+function aesDecrypt(encryptedData: string, key: string): string {
+    // Convert the key to WordArray using Hex encoding (not UTF-8)
+    const keyWordArray = CryptoJS.enc.Hex.parse(key)
+
+    // Decrypt using AES in ECB mode
+    const decrypted = CryptoJS.AES.decrypt(encryptedData, keyWordArray, {
+        mode: CryptoJS.mode.ECB,
+        padding: CryptoJS.pad.Pkcs7,
+    })
+
+    // Convert the decrypted data to UTF-8 string
+    return decrypted.toString(CryptoJS.enc.Utf8)
+}
+
+/**
+ * Add event listeners for data channel
+ */
+function setupDataChannel(dataChannel: RTCDataChannel): void {
+    // Set up event handlers
+    dataChannel.onopen = () => {
+        console.log("Data channel is open")
+        // You might want to send initial messages here
+    }
+
+    dataChannel.onclose = () => {
+        console.log("Data channel closed")
+    }
+
+    dataChannel.onerror = (error) => {
+        console.error("Data channel error:", error)
+    }
+
+    dataChannel.onmessage = (event) => {
+        handleMessage(event.data)
+    }
+}
+
+/**
+ * Handle incoming messages
+ */
+function handleMessage(message: string | ArrayBuffer): void {
+    try {
+        if (typeof message === "string") {
+            const msgObj = JSON.parse(message)
+            console.log("Received message:", msgObj)
+
+            // Handle different message types
+            if (msgObj.type === "validation") {
+                console.log("Received validation message:", msgObj.data)
+                // Handle validation
+                if (msgObj.data === "Validation Ok.") {
+                    console.log("Validation successful!")
+                }
+            }
+        } else {
+            // Handle binary message (like LiDAR data)
+            console.log("Received binary data, length:", message.byteLength)
+        }
+    } catch (error) {
+        console.error("Error handling message:", error)
+    }
+}
+
+/**
+ * Send a message through the data channel
+ */
+function sendMessage(
+    dataChannel: RTCDataChannel,
+    topic: string,
+    data: any,
+    type: string,
+): void {
+    if (dataChannel.readyState !== "open") {
+        console.error(
+            "Data channel is not open. State:",
+            dataChannel.readyState,
+        )
+        return
+    }
+
+    const payload = {
+        type: type,
+        topic: topic,
+        data: data,
+    }
+
+    console.log("Sending message:", payload)
+    dataChannel.send(JSON.stringify(payload))
+}
+
+/**
+ * Create a connection to the robot and handle messaging
+ */
+class RobotConnection {
+    pc: RTCPeerConnection
+    dataChannel: RTCDataChannel | null = null
+    connected = false
+
+    constructor() {
+        this.pc = new RTCPeerConnection()
+
+        // Set up connection state change listener
+        this.pc.onconnectionstatechange = () => {
+            console.log("Connection state changed:", this.pc.connectionState)
+            if (this.pc.connectionState === "connected") {
+                this.connected = true
+                console.log("WebRTC connection established successfully!")
+            }
+        }
+
+        // Handle ICE candidate events
+        this.pc.onicecandidate = (event) => {
+            if (event.candidate) {
+                console.log("New ICE candidate:", event.candidate)
+            }
+        }
+    }
+
+    /**
+     * Initialize the data channel
+     */
+    createDataChannel(): RTCDataChannel {
+        console.log("Creating data channel")
+        this.dataChannel = this.pc.createDataChannel("data", { id: 2 })
+
+        // Set up data channel handlers
+        this.dataChannel.onopen = () => {
+            console.log("Data channel opened")
+            this.onDataChannelOpen()
+        }
+
+        this.dataChannel.onclose = () => {
+            console.log("Data channel closed")
+        }
+
+        this.dataChannel.onerror = (error) => {
+            console.error("Data channel error:", error)
+        }
+
+        this.dataChannel.onmessage = (event) => {
+            this.handleMessage(event.data)
+        }
+
+        return this.dataChannel
+    }
+
+    /**
+     * Handle when the data channel opens
+     */
+    onDataChannelOpen(): void {
+        console.log("Data channel is ready for messaging")
+    }
+
+    /**
+     * Handle incoming messages
+     */
+    handleMessage(message: string | ArrayBuffer): void {
+        try {
+            if (typeof message === "string") {
+                const msgObj = JSON.parse(message)
+                console.log("Received message:", msgObj)
+
+                // Handle different message types
+                if (msgObj.type === "validation") {
+                    console.log("Received validation message:", msgObj.data)
+                    // Handle validation
+                    if (msgObj.data === "Validation Ok.") {
+                        console.log("Validation successful!")
+                    } else {
+                        this.sendValidationResponse(msgObj.data)
+                    }
+                }
+            } else {
+                // Handle binary message (like LiDAR data)
+                console.log("Received binary data, length:", message.byteLength)
+            }
+        } catch (error) {
+            console.error("Error handling message:", error)
+        }
+    }
+
+    /**
+     * Send a validation response
+     */
+    sendValidationResponse(challengeKey: string): void {
+        // Format: UnitreeGo2_{key}
+        const prefixedKey = `UnitreeGo2_${challengeKey}`
+
+        // Calculate MD5 hash
+        const md5Hash = CryptoJS.MD5(prefixedKey).toString()
+
+        // Convert hex to base64
+        const base64Hash = btoa(
+            md5Hash.match(/\w{2}/g)!.map((a) =>
+                String.fromCharCode(parseInt(a, 16))
+            ).join(""),
+        )
+
+        // Send the response
+        this.sendMessage("", base64Hash, "VALIDATION")
+    }
+
+    /**
+     * Send a message through the data channel
+     */
+    sendMessage(topic: string, data: any, type: string): void {
+        if (!this.dataChannel || this.dataChannel.readyState !== "open") {
+            console.error(
+                "Data channel is not open. State:",
+                this.dataChannel?.readyState,
+            )
+            return
+        }
+
+        const payload = {
+            type: type,
+            topic: topic,
+            data: data,
+        }
+
+        console.log("Sending message:", payload)
+        this.dataChannel.send(JSON.stringify(payload))
+    }
+
+    /**
+     * Send a command to the robot
+     */
+    sendCommand(command: string, data: any = {}): void {
+        this.sendMessage(command, data, "MESSAGE")
+    }
+
+    /**
+     * Close the connection
+     */
+    async close(): Promise<void> {
+        if (this.dataChannel) {
+            this.dataChannel.close()
+        }
+        await this.pc.close()
+        console.log("Connection closed")
+    }
+}
+
 // Example usage
-const robotIP = "192.168.12.1"
-const peerAnswer = await connect_robot(robotIP)
-console.log("Connection established, peer answer:", peerAnswer)
+async function main() {
+    try {
+        const robotIP = "192.168.12.1"
+        // Optional token if your robot requires authentication
+        const token = ""
+
+        console.log("Connecting to robot at", robotIP)
+
+        // Create robot connection
+        globalRobotConnection = new RobotConnection()
+
+        // Create data channel
+        globalRobotConnection.createDataChannel()
+
+        // Connect to the robot with the token
+        const peerAnswer = await connect_robot(robotIP, token)
+        console.log("Connection established, peer answer:", peerAnswer)
+
+        // Wait for the data channel to open before sending commands
+        setTimeout(() => {
+            if (globalRobotConnection?.dataChannel?.readyState === "open") {
+                console.log("Sending a test command to the robot")
+
+                // Example commands for Go2 robot:
+                // 1. Standing up
+                globalRobotConnection.sendCommand("motion", { motion: "stand" })
+
+                // // Wait 3 seconds then send a walking command
+                // setTimeout(() => {
+                //     console.log("Sending walking command")
+                //     globalRobotConnection?.sendCommand("cmd", {
+                //         cmd: "move",
+                //         params: {
+                //             vx: 0.5,  // forward velocity (m/s)
+                //             vy: 0,    // lateral velocity (m/s)
+                //             vz: 0     // turning velocity (rad/s)
+                //         }
+                //     })
+
+                //     // Stop after 2 seconds
+                //     setTimeout(() => {
+                //         console.log("Stopping robot")
+                //         globalRobotConnection?.sendCommand("cmd", {
+                //             cmd: "move",
+                //             params: {
+                //                 vx: 0,
+                //                 vy: 0,
+                //                 vz: 0
+                //             }
+                //         })
+                //     }, 2000)
+                // }, 3000)
+            } else {
+                console.log(
+                    "Data channel not open yet, state:",
+                    globalRobotConnection?.dataChannel?.readyState,
+                )
+            }
+        }, 2000)
+
+        // Keep the program running to maintain the WebRTC connection
+        console.log("Press Ctrl+C to exit")
+    } catch (error) {
+        console.error("Error connecting to robot:", error)
+    }
+}
+
+// Run the main function
+main()
