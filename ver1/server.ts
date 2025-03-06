@@ -1,4 +1,8 @@
-import { Application, Context, Next } from "https://deno.land/x/oak/mod.ts"
+import {
+    Application,
+    Context,
+    Next,
+} from "https://deno.land/x/oak@v17.1.4/mod.ts"
 import { apiRouter } from "./api.ts"
 import { staticRouter } from "./static.ts"
 
