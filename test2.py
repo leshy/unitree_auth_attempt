@@ -5,6 +5,7 @@ from Crypto.Cipher import PKCS1_v1_5
 import base64
 import uuid
 import binascii
+import json
 
 ###############
 ### AES handling
@@ -29,7 +30,7 @@ def aes_encrypt(data: str, key: str) -> str:
 
     # Pad the data to ensure it is a multiple of block size
     padded_data = pad(data)
-
+    
     # Create AES cipher in ECB mode
     cipher = AES.new(key_bytes, AES.MODE_ECB)
 
@@ -60,5 +61,12 @@ def aes_decrypt(encrypted_data: str, key: str) -> str:
 
     return decrypted_data
 
+# read json file
+with open('mock/aes.json', 'r') as f:
+    sdp = json.loads(f.read())["sdp"]
 
-print(aes_encrypt("test", "d0288048ddb84ab9811b1dca3fc96eb5"))
+sdp = { "bla": 3 }
+    
+print(json.dumps(sdp))
+    
+print(aes_encrypt(json.dumps(sdp), "d0288048ddb84ab9811b1dca3fc96eb5"))

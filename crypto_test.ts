@@ -27,29 +27,40 @@ function base64ToArray(base64: string): Uint8Array {
     return bytes
 }
 
-function aesEncrypt(hexKey: string, text: string): string {
-    // aes.enc(target, key, iv = zero16IV, inputEncoding = 'utf-8', outputEncoding = 'base64', algorithm = 'aes-128-cbc', autoPadding = true);
+function aesEncrypt(key: string, text: string): string {
+    // Match Python implementation - use key as UTF-8 encoded string (not hex)
+    // Use AES-256-ECB to match Python's default with 32 byte key
     return aes.enc(
         text,
-        Buffer.from(hexKey, "hex"),
+        Buffer.from(key, "utf8"), // Use UTF-8 encoding to match Python
         aes.emptyIV,
         "utf-8",
         "base64",
-        "aes-128-ecb",
+        "aes-256-ecb", // Use AES-256 to match Python
         true,
     )
 }
 
-function aesEncryptNode(hexKey: string, text: string): string {
-    // Use the provided hex key instead of hardcoded value - convert hexKey to a Buffer
-    const key = Buffer.from(hexKey, "hex")
+function aesEncryptNode(key: string, text: string): string {
+    // Match Python implementation using Node's crypto
+    const keyBytes = Buffer.from(key, "utf8") // Use UTF-8 encoding to match Python
     const secret_msg = Buffer.from(text, "utf-8")
-    const cipher = crypto.createCipheriv("aes-128-ecb", key, Buffer.alloc(0))
+
+    // Use AES-256-ECB to match Python's implementation
+    const cipher = crypto.createCipheriv(
+        "aes-256-ecb",
+        keyBytes,
+        Buffer.alloc(0),
+    )
+
+    // Use PKCS padding to match Python's default
     cipher.setAutoPadding(true)
+
     const encryptedData = Buffer.concat([
         cipher.update(secret_msg),
         cipher.final(),
     ])
+    console.log(encryptedData)
     return encryptedData.toString("base64")
 }
 
@@ -174,13 +185,12 @@ async function prepareEncryptedRequest(
     console.log("\n", await rsaKey.export("pem"), "\n")
 
     console.log("TEST", aesEncrypt(aesKey, "test"))
-    console.log("TEST", aesEncryptNode(aesKey, "test"))
+    //console.log("TEST", aesEncryptNode(aesKey, "test"))
 
     // 3. Encrypt the SDP with AES and encrypt the AES key with RSA
-    const encodedSdp = JSON.stringify(sdpData)
-    console.log("SDP", encodedSdp)
-    const encryptedSdp = aesEncrypt(aesKey, encodedSdp)
-    console.log("Encrypted SDP", encryptedSdp)
+
+    const encryptedSdp = aesEncryptNode(aesKey, JSON.stringify(sdpData))
+    console.log("\n\nEncrypted SDP", encryptedSdp, "\n\n")
 
     const encryptedKey = await rsaEncrypt(rsaKey, aesKey)
     console.log("Encrypted SDP and key")

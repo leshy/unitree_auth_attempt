@@ -130,7 +130,7 @@ def prepareEncryptedRequest(response, sdp, aes_key):
     encoded_sdp = json.dumps(sdp)
     print("SDP", encoded_sdp)
     encrypted_sdp = aes_encrypt(encoded_sdp, aes_key)
-    print("Encrypted SDP", encrypted_sdp)
+    print("\n\nEncrypted SDP", encrypted_sdp, "\n\n")
     
     # Encrypt the AES key with RSA
     encrypted_key = rsa_encrypt(aes_key, public_key)

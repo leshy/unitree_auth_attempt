@@ -1,5 +1,5 @@
 import { RTCPeerConnection, RTCSessionDescription } from "npm:webrtc-polyfill"
-import CryptoJS from "npm:crypto-js"
+import * as crypto from "./crypto.ts"
 
 type SDPPeerAnswer = { sdp: string; type: "answer" }
 
@@ -35,7 +35,6 @@ async function connect_robot(
     const peer_answer = await get_peer_answer(
         ip,
         sdpOffer as RTCSessionDescription,
-        token,
     )
 
     // Set the remote description with the answer
@@ -61,111 +60,101 @@ async function connect_robot(
 async function get_peer_answer(
     robotIp: string,
     sdpOffer: RTCSessionDescription,
-    token: string = "",
-): Promise<SDPPeerAnswer> {
+): Promise<any> {
     const sdpOfferJson = {
         id: "STA_localNetwork",
         sdp: sdpOffer.sdp,
         type: sdpOffer.type,
-        token: token,
     }
 
+    console.log(sdpOfferJson)
     const newSdp = JSON.stringify(sdpOfferJson)
     const url = `http://${robotIp}:9991/con_notify`
 
     // First request to get the public key
     const response = await fetch(url, { method: "POST" })
 
-    if (response.status === 200) {
-        // Get the response text and decode from bse64
-        const responseText = await response.text()
-        const decodedResponse = atob(responseText)
+    if (response.status !== 200) {
+        throw new Error("Failed to get peer answer from the robot")
+    }
+    // Get the response text and decode from bse64
+    const responseText = await response.text()
+    const decodedResponse = atob(responseText)
 
-        // Parse the decoded response as JSON
-        const decodedJson = JSON.parse(decodedResponse)
+    // Parse the decoded response as JSON
+    const decodedJson = JSON.parse(decodedResponse)
 
-        // Extract the 'data1' field fr
-        const data1 = decodedJson.data1
-        // Extract the public key from 'data1'
-        const publicKeyPem = data1.substring(10, data1.length - 10)
-        const pathEnding = calc_local_path_ending(data1)
+    // Extract the 'data1' field fr
+    const data1 = decodedJson.data1
+    // Extract the public key from 'data1'
+    const publicKeyPem = data1.substring(10, data1.length - 10)
+    const pathEnding = calc_local_path_ending(data1)
 
-        // Note: These encryption functions would need to be implemented properly
-        // For testing purposes, we'll just return a mock peer answer
+    // Note: These encryption functions would need to be implemented properly
+    // For testing purposes, we'll just return a mock peer answer
 
-        console.log("Public key received, path ending calculated:", pathEnding)
+    console.log("Public key received, path ending calculated:", pathEnding)
 
-        // Now let's implement the real communication with the device:
+    // 1. Generate AES key (UUID converted to hex string)
+    const aesKey = crypto.generateAesKey()
+    console.log("Generated AES key", aesKey)
 
-        // 1. Generate AES key (UUID converted to hex string)
-        const aesKey = generateAesKey()
-        console.log("Generated AES key")
+    // 2. Load Public Key
+    // Convert PEM format to usable key
+    const robotPublicKey = await crypto.loadRsaKey(publicKeyPem)
+    console.log("Loaded public key")
 
-        // 2. Load Public Key
-        // Convert PEM format to usable key
-        const publicKey = await loadPublicKey(publicKeyPem)
-        console.log("Loaded public key")
+    // 3. Encrypt the SDP with AES and encrypt the AES key with RSA
+    const encryptedSdp = crypto.aesEncrypt(aesKey, newSdp)
+    const encryptedKey = await crypto.rsaEncrypt(robotPublicKey, aesKey)
+    console.log("Encrypted SDP and key")
 
-        // 3. Encrypt the SDP with AES and encrypt the AES key with RSA
-        const encryptedSdp = aesEncrypt(newSdp, aesKey)
-        const encryptedKey = await rsaEncrypt(aesKey, publicKey)
-        console.log("Encrypted SDP and key")
+    // 4. Send encrypted data to con_ing_{pathEnding}
 
-        // 4. Send encrypted data to con_ing_{pathEnding}
-        const requestBody = {
-            data1: encryptedSdp,
-            data2: encryptedKey,
-        }
+    // URL for the second request
+    const secondUrl = `http://${robotIp}:9991/con_ing_${pathEnding}`
 
-        // URL for the second request
-        const secondUrl = `http://${robotIp}:9991/con_ing_${pathEnding}`
-
-        // Set appropriate headers
-        const headers = {
-            "Content-Type": "application/x-www-form-urlencoded",
-        }
-
-        // Convert to URL-encoded form data (key1=value1&key2=value2)
-        // This matches how Python's requests library formats form data
-        const formData = new URLSearchParams()
-        formData.append("data1", encryptedSdp)
-        formData.append("data2", encryptedKey)
-        
-        console.log(`Sending encrypted data to ${secondUrl}`)
-        console.log("Request body format:", formData.toString())
-        
-        const secondResponse = await fetch(secondUrl, {
-            method: "POST",
-            headers,
-            body: formData
-        })
-
-        if (secondResponse.status === 200) {
-            // 5. Decrypt the response
-            const encryptedResponse = await secondResponse.text()
-            const decryptedResponse = aesDecrypt(encryptedResponse, aesKey)
-            console.log("Successfully decrypted response")
-
-            // Parse the decrypted response
-            const peerAnswer = JSON.parse(decryptedResponse)
-            console.log("Received real peer answer from device")
-
-            return {
-                sdp: peerAnswer.sdp,
-                type: "answer",
-            }
-        } else {
-            console.error(
-                "Failed to get response from second request:",
-                secondResponse.status,
-            )
-            throw new Error(
-                `Failed to get response from ${secondUrl}: ${secondResponse.status}`,
-            )
-        }
+    // Set appropriate headers
+    const headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
     }
 
-    throw new Error("Failed to get peer answer from the robot")
+    // Convert to URL-encoded form data (key1=value1&key2=value2)
+    // This matches how Python's requests library formats form data
+    const body = { "data1": encryptedSdp, "data2": encryptedKey }
+
+    console.log(`Sending encrypted data to ${secondUrl}`)
+
+    const secondResponse = await fetch(secondUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+    })
+
+    if (secondResponse.status === 200) {
+        // 5. Decrypt the response
+        const encryptedResponse = await secondResponse.text()
+        console.log("GOT", encryptedResponse)
+        // const decryptedResponse = aesDecrypt(encryptedResponse, aesKey)
+        // console.log("Successfully decrypted response")
+
+        // // Parse the decrypted response
+        // const peerAnswer = JSON.parse(decryptedResponse)
+        // console.log("Received real peer answer from device")
+
+        // return {
+        //     sdp: peerAnswer.sdp,
+        //     type: "answer",
+        // }
+    } else {
+        console.error(
+            "Failed to get response from second request:",
+            secondResponse.status,
+        )
+        throw new Error(
+            `Failed to get response from ${secondUrl}: ${secondResponse.status}`,
+        )
+    }
 }
 
 /**
@@ -202,126 +191,6 @@ function calc_local_path_ending(data1: string): string {
     const joinToString = arrayList.join("")
 
     return joinToString
-}
-
-/**
- * Generate a random AES key as a hex string
- * This matches the Python implementation which uses a UUID (16 bytes) 
- * and converts it to a hex string (32 characters)
- */
-function generateAesKey(): string {
-    // Generate a UUID (16 bytes)
-    // This is what Python does with uuid.uuid4().bytes
-    const randomValues = new Uint8Array(16)
-    crypto.getRandomValues(randomValues)
-    
-    // Convert to hex string - this will be 32 characters long
-    // Just like the Python binascii.hexlify(uuid_32).decode("utf-8")
-    return Array.from(randomValues)
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join("")
-}
-
-/**
- * Load an RSA public key from PEM format
- */
-async function loadPublicKey(pemData: string): Promise<CryptoKey> {
-    // Decode the base64 PEM data
-    const binaryDer = base64ToArrayBuffer(pemData)
-
-    // Import the key
-    return await crypto.subtle.importKey(
-        "spki",
-        binaryDer,
-        {
-            name: "RSA-OAEP",
-            hash: "SHA-256",
-        },
-        true,
-        ["encrypt"],
-    )
-}
-
-/**
- * Convert base64 to ArrayBuffer
- */
-function base64ToArrayBuffer(base64: string): ArrayBuffer {
-    const binaryString = atob(base64)
-    const bytes = new Uint8Array(binaryString.length)
-    for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i)
-    }
-    return bytes.buffer
-}
-
-/**
- * Encrypt data using AES (ECB mode)
- */
-function aesEncrypt(data: string, key: string): string {
-    // Convert the key to WordArray using Hex encoding (not UTF-8)
-    const keyWordArray = CryptoJS.enc.Hex.parse(key)
-
-    // Convert the data to WordArray
-    const dataWordArray = CryptoJS.enc.Utf8.parse(data)
-
-    // Encrypt using AES in ECB mode
-    const encrypted = CryptoJS.AES.encrypt(dataWordArray, keyWordArray, {
-        mode: CryptoJS.mode.ECB,
-        padding: CryptoJS.pad.Pkcs7,
-    })
-
-    // Return the result as base64
-    return encrypted.toString()
-}
-
-/**
- * RSA encrypt data with public key
- */
-async function rsaEncrypt(data: string, publicKey: CryptoKey): Promise<string> {
-    // Convert data to bytes
-    const encoder = new TextEncoder()
-    const dataBytes = encoder.encode(data)
-
-    // Encrypt the data
-    const encryptedBuffer = await crypto.subtle.encrypt(
-        {
-            name: "RSA-OAEP",
-        },
-        publicKey,
-        dataBytes,
-    )
-
-    // Convert to base64
-    return arrayBufferToBase64(encryptedBuffer)
-}
-
-/**
- * Convert ArrayBuffer to base64
- */
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-    const bytes = new Uint8Array(buffer)
-    let binary = ""
-    for (let i = 0; i < bytes.byteLength; i++) {
-        binary += String.fromCharCode(bytes[i])
-    }
-    return btoa(binary)
-}
-
-/**
- * Decrypt AES encrypted data
- */
-function aesDecrypt(encryptedData: string, key: string): string {
-    // Convert the key to WordArray using Hex encoding (not UTF-8)
-    const keyWordArray = CryptoJS.enc.Hex.parse(key)
-
-    // Decrypt using AES in ECB mode
-    const decrypted = CryptoJS.AES.decrypt(encryptedData, keyWordArray, {
-        mode: CryptoJS.mode.ECB,
-        padding: CryptoJS.pad.Pkcs7,
-    })
-
-    // Convert the decrypted data to UTF-8 string
-    return decrypted.toString(CryptoJS.enc.Utf8)
 }
 
 /**
@@ -423,7 +292,7 @@ class RobotConnection {
         // Handle ICE candidate events
         this.pc.onicecandidate = (event) => {
             if (event.candidate) {
-                console.log("New ICE candidate:", event.candidate)
+                console.log("New ICE candidate:", event.candidate.address)
             }
         }
     }
