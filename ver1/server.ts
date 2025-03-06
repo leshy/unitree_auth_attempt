@@ -3,10 +3,11 @@ import {
     Context,
     Next,
 } from "https://deno.land/x/oak@v17.1.4/mod.ts"
+
 import { apiRouter } from "./api.ts"
 import { staticRouter } from "./static.ts"
 
-const settings = { port: 3000 }
+const settings = { oak: { port: 3000 } }
 const env = { settings }
 
 const app = new Application()
@@ -23,7 +24,7 @@ app.use(staticRouter.routes())
 app.use(staticRouter.allowedMethods())
 
 app.addEventListener("listen", () => {
-    console.log(`Listening on *:${env.settings.port}`)
+    console.log(`Listening on *:${env.settings.oak.port}`)
 })
 
-app.listen({ port: env.settings.port })
+app.listen(env.settings.oak)

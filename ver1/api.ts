@@ -5,7 +5,7 @@ apiRouter.get("/bla", (ctx: Context) => {
     ctx.response.body = "yo"
 })
 
-apiRouter.post("/init", async (ctx: Context, next: Next) => {
+apiRouter.post("/init", async (ctx: Context, _: Next) => {
     console.log(await ctx.request.body.json())
-    await next()
+    ctx.response.body = { status: "ok" }
 })
