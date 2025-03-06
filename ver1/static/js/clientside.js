@@ -488,17 +488,18 @@ async function connectRobot() {
   channel.onmessage = console.log;
   log("creating SDP offer...");
   await pc.createOffer().then((offer) => pc.setLocalDescription(offer)).then(() => {
-    log("offer created");
+    log("offer created, sending");
   });
   const sdpreq = {
-    token: "",
-    id: "STA_localNetwork",
-    type: "offer",
-    ip: "192.168.12.1",
+    id: "",
+    // id: "STA_localNetwork",
+    //ip: "192.168.12.1",
     // @ts-ignore
-    sdp: pc.localDescription.sdp
+    sdp: pc.localDescription.sdp,
+    type: "offer",
+    token: ""
   };
-  console.log(sdpreq);
+  console.log("SDP OFFER", sdpreq);
   const peer_answer = await getPeerAnswer(
     sdpreq,
     "192.168.12.1"
