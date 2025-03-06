@@ -34,46 +34,66 @@ function calc_local_path_ending(data1: string): string {
     return joinToString
 }
 
-async function send_sdp_to_local_peer_new_method(
+export async function send_sdp_to_local_peer_new_method(
     ip: string,
-    sdp: RTCSessionDescription,
+    // @ts-ignore
+    sdpOfferJson,
 ): RTCSessionDescriptionInit {
-    const sdpOfferJson = {
-        id: "STA_localNetwork",
-        sdp: sdp.sdp,
-        type: sdp.type,
-        token: "",
-    }
+    // for now we expect client to create this
+    // const sdpOfferJson = {
+    //     id: "STA_localNetwork",
+    //     sdp: sdp.sdp,
+    //     type: sdp.type,
+    //     token: "",
+    // }
+
+    console.log("OFFER IS", sdpOfferJson)
+    console.log("Initiating handshake with", ip)
 
     const url = `http://${ip}:9991/con_notify`
-
+    console.log("Requesting", url)
     const publicKeyResponse = await fetch(new Request(url, { method: "GET" }))
     const decodedResponse = atob(await publicKeyResponse.text())
 
+    console.log("Received response", decodedResponse)
     const { data1 } = JSON.parse(decodedResponse)
 
-    const pathEnding = calc_local_path_ending(data1)
-
-    const aesKey = crypto.generateAesKey()
     const rsaPubKeyPem = data1.substring(10, data1.length - 10)
-
     const rsaPubKey = crypto.loadRsaKey(rsaPubKeyPem)
 
-    // @ts-ignore
-    console.log("\nrobot RSA key:\n", await rsaPubKey.export("pem"), "\n")
+    console.log(
+        "\nDecoded Robot RSA key:\n",
+        // @ts-ignore
+        await rsaPubKey.export("pem"),
+        "\n",
+    )
+    const aesKey = crypto.generateAesKey()
+
+    console.log("Generated AES key", aesKey)
 
     const body = {
+        // TODO :verify AES
         "data1": crypto.aesEncrypt(aesKey, JSON.stringify(sdpOfferJson)),
+        // TODO :verify RSA
         "data2": await crypto.rsaEncrypt(rsaPubKey, aesKey),
     }
 
+    const pathEnding = calc_local_path_ending(data1)
+
+    const localIp = "localhost"
     const connect_url = `http://${ip}:9991/con_ing_${pathEnding}`
+
     console.log("connect url:", connect_url)
+
+    //    console.log(body)
 
     const resp = await fetch(
         new Request(connect_url, {
             headers: {
                 "Content-Type": "application/x-www-form-urlencoded",
+                "Accept-Encoding": "gzip, deflate",
+                "Accept": "*/*",
+                "Connection": "keep-alive",
             },
             body: JSON.stringify(body),
             method: "POST",
@@ -85,7 +105,7 @@ async function send_sdp_to_local_peer_new_method(
     console.log(await resp.text())
 }
 
-async function connect_robot(
+export async function connect_robot(
     ip: string,
     token: string = "",
 ): Promise<SDPPeerAnswer> {
@@ -100,21 +120,28 @@ async function connect_robot(
     console.log("Creating offer...")
 
     // Create offer with proper configuration
-    const offer = await pc.createOffer({
-        offerToReceiveAudio: false,
-        offerToReceiveVideo: false,
-    })
-    console.log("OK")
+    pc.addTransceiver("video", { direction: "recvonly" })
+    pc.addTransceiver("audio", { direction: "recvonly" })
+    const offer = await pc.createOffer()
     await pc.setLocalDescription(offer)
 
-    console.log("created")
+    console.log("created offer")
     const sdpOffer: RTCSessionDescription = pc
         .localDescription as RTCSessionDescription
 
-    const peer_answer = await send_sdp_to_local_peer_new_method(ip, sdpOffer)
+    const sdpreq = {
+        token: "",
+        id: "STA_localNetwork",
+        type: "offer",
+        ip: ip,
+        // @ts-ignore
+        sdp: pc.localDescription.sdp,
+    }
+
+    return await send_sdp_to_local_peer_new_method(ip, sdpreq)
 
     // Set the remote description with the answer
-    console.log("Setting remote description with peer answer", peer_answer)
+    //console.log("Setting remote description with peer answer", peer_answer)
 
     // try {
     //     // Create a proper RTCSessionDescription object
@@ -129,4 +156,4 @@ async function connect_robot(
     // return peer_answer
 }
 
-await connect_robot("192.168.12.1")
+//await connect_robot("192.168.12.1")
